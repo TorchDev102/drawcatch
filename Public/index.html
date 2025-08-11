@@ -1,1 +1,43 @@
-
+<!doctype html><html><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Draw & Catch</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+html,body,#map{height:100%;margin:0}#ui{position:absolute;left:8px;top:8px;z-index:1;background:#fff8;padding:10px;border-radius:8px;width:320px;max-width:calc(100% - 16px)}
+canvas{border:1px solid #ccc;touch-action:none}.small{font-size:.9rem}#players{max-height:120px;overflow:auto}.marker-thumb{width:64px;height:64px;object-fit:contain}
+</style></head><body>
+<div id="map"></div>
+<div id="ui">
+<label>Name:<input id="name"/></label><button id="joinBtn">Join</button><hr/>
+<div class="small">Draw creature:</div>
+<canvas id="draw" width="280" height="160"></canvas>
+<div style="display:flex;gap:6px;margin-top:6px">
+<button id="clearBtn">Clear</button><button id="spawnBtn">Spawn</button>
+<input id="creatureName" placeholder="Name"/>
+</div><hr/><div class="small">Players:</div><div id="players"></div><hr/><div id="messages" class="small"></div>
+</div>
+<script src="/socket.io/socket.io.js"></script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const socket=io(),markers=new Map();let myId,myPos;
+const map=L.map('map').setView([0,0],2);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+const canvas=document.getElementById('draw'),ctx=canvas.getContext('2d');ctx.lineWidth=6;ctx.lineCap='round';
+let drawing=false;function pos(e){let r=canvas.getBoundingClientRect();let p=e.touches?e.touches[0]:e;return{x:p.clientX-r.left,y:p.clientY-r.top}}
+canvas.onpointerdown=e=>{drawing=true;let p=pos(e);ctx.beginPath();ctx.moveTo(p.x,p.y);e.preventDefault()}
+canvas.onpointermove=e=>{if(!drawing)return;let p=pos(e);ctx.lineTo(p.x,p.y);ctx.stroke()}
+onpointerup=()=>drawing=false;
+clearBtn.onclick=()=>ctx.clearRect(0,0,canvas.width,canvas.height);
+joinBtn.onclick=()=>{socket.emit('join',{name:name.value||'Anon'});joinBtn.disabled=1;navigator.geolocation.watchPosition(p=>{myPos={lat:p.coords.latitude,lng:p.coords.longitude};socket.emit('move',myPos)})}
+spawnBtn.onclick=()=>{if(!myPos)return msg('No location');socket.emit('spawn_creature',{name:creatureName.value||'Creature',dataUrl:canvas.toDataURL(),...myPos});ctx.clearRect(0,0,canvas.width,canvas.height)};
+function msg(m){messages.innerText=m;setTimeout(()=>messages.innerText='',4e3)}
+socket.on('connect',()=>myId=socket.id);
+socket.on('init',({spawns,players})=>{players.forEach(updPlayer);spawns.forEach(addSpawn)});
+socket.on('spawn_added',addSpawn);
+socket.on('spawn_removed',({spawnId})=>{let m=markers.get(spawnId);if(m){map.removeLayer(m);markers.delete(spawnId)}});
+socket.on('players_update',ps=>{ps.forEach(updPlayer);players.innerHTML=ps.map(p=>`<div><b>${p.name}</b> — ${p.points||0}</div>`).join('')});
+socket.on('catch_result',r=>msg(r.success?'Caught!':r.reason==='too_far'?'Too far':'Catch failed'));
+function updPlayer(p){}
+function addSpawn(s){if(markers.has(s.id))return;let ic=L.divIcon({className:'',html:`<div style="text-align:center"><img class="marker-thumb" src="${s.dataUrl}"/><div style="background:#fff;padding:2px;border-radius:4px;font-size:12px">${s.name}</div></div>`});
+let m=L.marker([s.lat,s.lng],{icon:ic}).addTo(map);m.on('click',()=>{if(!myPos)return msg('No location');let d=dist(myPos,s);if(d>60)return msg('Too far');socket.emit('attempt_catch',{spawnId:s.id,...myPos})});markers.set(s.id,m)}
+function dist(a,b){let R=6371e3;let p1=a.lat*Math.PI/180,p2=b.lat*Math.PI/180;let dp=(b.lat-a.lat)*Math.PI/180,dl=(b.lng-a.lng)*Math.PI/180;let c=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;return 2*R*Math.atan2(Math.sqrt(c),Math.sqrt(1-c))}
+</script></body></html>
